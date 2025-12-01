@@ -9,7 +9,7 @@ from db import create_tables, get_questions_by_date, save_questions, save_user_a
 # -------------------------
 create_tables()
 
-st.title("2^two")
+st.markdown("<h1>2<sup>Two</sup></h1>", unsafe_allow_html=True)
 st.write("Solve 2 Aptitude + 2 Technical Questions Daily!")
 
 # -------------------------
