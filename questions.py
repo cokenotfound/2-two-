@@ -7,31 +7,28 @@ import requests
 from typing import List, Dict, Any
 
 # -------------------------
-# Load API Key
-# -------------------------
-load_dotenv()
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-if not OPENROUTER_API_KEY:
-    print("FATAL WARNING: OPENROUTER_API_KEY not found. Using fallback questions.")
-
-# -------------------------
-# API client info (OpenAI Compatible)
+# Model and API Info
 # -------------------------
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# Recommended stable, free model known for strong JSON structured output
+# Using the stable, free Deepseek MoE model for strong JSON output
 OPENROUTER_MODEL = "tngtech/deepseek-r1t2-chimera:free" 
 
-HEADERS = {
-    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-    "Content-Type": "application/json",
-    # Required for OpenRouter security check (use http://localhost for development)
-    "HTTP-Referer": "http://localhost" 
-}
+# Global variable to cache the API key after loading
+_OPENROUTER_API_KEY = None 
 
 # -------------------------
-# Prompt for MCQs (Final Topics and 30-Word Limit)
+# API Key Helper (Breaks Circular Import)
+# -------------------------
+def get_api_key():
+    """Loads the API key and caches it."""
+    global _OPENROUTER_API_KEY
+    if _OPENROUTER_API_KEY is None:
+        load_dotenv()
+        _OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    return _OPENROUTER_API_KEY
+
+# -------------------------
+# Prompt for MCQs (UPDATED: Explanation length changed to 50-100 words)
 # -------------------------
 PROMPT = """
 Generate exactly 4 multiple-choice questions for CSE technical interview level:
@@ -44,12 +41,14 @@ Requirements:
 1. Each question must have exactly 4 options (A, B, C, D).
 2. The correct answer must be randomly placed among the options; do not always put it at A.
 3. Provide one correct answer only.
-4. Provide a concise explanation for why the correct answer is correct, **maximum 30 words**.
-5. Format the output strictly as a JSON list like this:
+4. Provide a detailed explanation for why the correct answer is correct, **between 50 and 100 words**.
+5. **Include a 'sub_category' field** identifying the specific topic (e.g., 'Probability', 'Operating Systems').
+6. Format the output strictly as a JSON list like this:
 
 [
   {
     "type": "aptitude or technical",
+    "sub_category": "Topic Name Here",
     "question": "question text",
     "options": {
       "A": "option text",
@@ -58,7 +57,7 @@ Requirements:
       "D": "option text"
     },
     "answer": "A/B/C/D",
-    "explanation": "short explanation (MAX 30 WORDS)"
+    "explanation": "Detailed explanation (50-100 WORDS)"
   }
 ]
 
@@ -68,48 +67,50 @@ Do not include any text outside the JSON. Ensure that the options for each quest
 # -------------------------
 # Generate questions from OpenRouter
 # -------------------------
-def generate_questions():
+def generate_questions() -> List[Dict[str, Any]] | None:
+    OPENROUTER_API_KEY = get_api_key()
     if not OPENROUTER_API_KEY:
+        print("InferenceClient not initialized. Check OPENROUTER_API_KEY.")
         return None
     
     unique_prompt = PROMPT + f"\n\n--- Request Seed: {uuid.uuid4()} ---"
 
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost" # Placeholder for local development
+    }
+
     payload = {
         "model": OPENROUTER_MODEL,
-        "response_format": {"type": "json_object"}, # CRUCIAL for reliable JSON
+        "response_format": {"type": "json_object"}, 
         "messages": [
             {"role": "system", "content": "You are an expert quiz generator. Your response must be a valid JSON array, strictly adhering to the user's required structure."},
             {"role": "user", "content": unique_prompt}
         ],
         "temperature": 0.7,
-        "max_tokens": 2000 
+        "max_tokens": 3000 
     }
     
+    text = ""
     try:
-        response = requests.post(OPENROUTER_API_URL, headers=HEADERS, json=payload, timeout=60)
+        # Increased timeout to 90 seconds to accommodate slow free-tier latency
+        response = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=90) 
         response.raise_for_status() 
         data = response.json()
         
         # OpenRouter/OpenAI parsing
         text = data['choices'][0]['message']['content']
         
-        # 1. Clean markdown code block if present
+        # Robust JSON cleanup
         if text.strip().startswith("```json"):
             text = text.strip().strip("```json").strip("```")
-
-        # 2. Find the start and end of the JSON array for robustness
-        try:
-            json_start = text.index('[')
-            json_end = text.rindex(']')
-            # Slice the text to include only the content from '[' to ']'
-            text = text[json_start : json_end + 1]
-        except ValueError:
-            # If brackets are not found, the output is fundamentally broken
-            print("Error: Could not find valid JSON array markers ([...]) in LLM output.")
-            print("RAW OUTPUT:", text)
-            return None
-
-        # --- END OF NEW ROBUST CLEANUP LOGIC ---
+            
+        json_start = text.find('[')
+        json_end = text.rfind(']')
+        if json_start == -1 or json_end == -1:
+             raise ValueError(f"Could not find valid JSON array boundaries ([...]) in LLM output. Output length: {len(text)}")
+        text = text[json_start : json_end + 1]
         
         questions = json.loads(text)
         
@@ -118,11 +119,14 @@ def generate_questions():
             opts = list(q['options'].items())
             random.shuffle(opts)
             shuffled = {k: v for k, v in opts}
-            correct_value = q['options'][q['answer']]
-            for key, val in shuffled.items():
-                if val == correct_value:
-                    q['answer'] = key
-                    break
+            correct_value = q['options'].get(q['answer'], None)
+            
+            # Find the new key corresponding to the correct value after shuffle
+            new_answer_key = next((key for key, val in shuffled.items() if val == correct_value), None)
+
+            if new_answer_key:
+                 q['answer'] = new_answer_key
+            
             q['options'] = shuffled
             
         return questions
@@ -131,45 +135,49 @@ def generate_questions():
         status_code = getattr(e.response, 'status_code', 'N/A')
         print(f"OpenRouter API Error: HTTP Status {status_code}. Reason: {e}")
         return None
-    except json.JSONDecodeError:
-        print(f"Error parsing model output: JSON Decode Error. Check model response format. RAW OUTPUT: {text}")
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        print(f"Error parsing model output: {type(e).__name__}. RAW OUTPUT: {text}")
         return None
     except Exception as e:
         print(f"Unexpected generation error: {e}")
         return None
 
 # -------------------------
-# Fallback sample questions (Used if API fails)
+# Fallback sample questions (UPDATED with new schema fields)
 # -------------------------
-def generate_sample_questions():
+def generate_sample_questions() -> List[Dict[str, Any]]:
     return [
         {
             "type": "aptitude",
-            "question": "What is 2 + 2?",
-            "options": {"A": "3", "B": "4", "C": "5", "D": "6"},
-            "answer": "B",
-            "explanation": "2 + 2 = 4 (Maximum 30 Words)."
+            "sub_category": "Sequences & Series",
+            "question": "What is the next number in the sequence: 2, 4, 8, 16, ...",
+            "options": {"A": "20", "B": "24", "C": "32", "D": "48"},
+            "answer": "C",
+            "explanation": "This is a geometric progression where each term is twice the previous term. The rule is 2^n. Since the last term is 16 (2^4), the next term will be 2^5, which equals 32. This type of pattern recognition is fundamental to quantitative aptitude. (75 words)."
         },
         {
             "type": "aptitude",
-            "question": "If a train travels 60 km in 1 hour, how far will it travel in 2.5 hours?",
-            "options": {"A": "120 km", "B": "150 km", "C": "180 km", "D": "200 km"},
+            "sub_category": "Probability",
+            "question": "What is the probability of rolling a 3 on a standard six-sided die?",
+            "options": {"A": "1/2", "B": "1/6", "C": "1/3", "D": "1/12"},
             "answer": "B",
-            "explanation": "Distance = Speed × Time. 60 km/h * 2.5 h = 150 km. (Maximum 30 Words)."
+            "explanation": "Probability is calculated as (Number of favorable outcomes) / (Total number of possible outcomes). A standard six-sided die has six possible outcomes (1, 2, 3, 4, 5, 6). The favorable outcome is rolling a 3, which is 1 outcome. Therefore, the probability is 1/6. This is a basic example of discrete probability. (80 words)."
         },
         {
             "type": "technical",
-            "question": "Which data structure uses LIFO?",
-            "options": {"A": "Queue", "B": "Stack", "C": "List", "D": "Tree"},
+            "sub_category": "Data Structures",
+            "question": "Which data structure uses LIFO (Last-In, First-Out) ordering?",
+            "options": {"A": "Queue", "B": "Stack", "C": "Linked List", "D": "Heap"},
             "answer": "B",
-            "explanation": "Stack uses Last-In, First-Out (LIFO) order, meaning the last element added is the first one removed. (Maximum 30 Words)."
+            "explanation": "A stack is an abstract data type that maintains elements in a LIFO order. Think of it like a stack of plates: you only add to the top, and you only remove from the top. Operations include push (add) and pop (remove). This is crucial for managing function calls and variable scoping in computer programs. (70 words)."
         },
         {
             "type": "technical",
-            "question": "What is normalization in a database?",
-            "options": {"A": "Organizing data to minimize redundancy", "B": "Optimizing search speed", "C": "Adding indexes to tables", "D": "Encrypting data for security"},
-            "answer": "A",
-            "explanation": "Normalization is the process of organizing the columns and tables in a database to reduce data redundancy and improve data integrity. (Maximum 30 Words)."
+            "sub_category": "Operating Systems",
+            "question": "What is a deadlock?",
+            "options": {"A": "A process waiting for I/O", "B": "Two processes waiting for each other indefinitely", "C": "A process that has finished execution", "D": "A system crash due to low memory"},
+            "answer": "B",
+            "explanation": "Deadlock is a state in concurrent computing where two or more processes are permanently unable to proceed because each is waiting for a resource that the other process is currently holding. The necessary conditions for deadlock are mutual exclusion, hold and wait, no preemption, and circular wait. This leads to system stagnation. (85 words)."
         }
     ]
 
@@ -183,7 +191,8 @@ def parse_questions(raw_questions: List[Dict[str, Any]]):
     for idx, q in enumerate(raw_questions):
         parsed.append({
             "id": idx + 1,
-            "type": q.get("type", ""),
+            "type": q.get("type", "unknown"),
+            "sub_category": q.get("sub_category", "General"), 
             "question": q.get("question", ""),
             "options": q.get("options", {}),
             "answer": q.get("answer", ""),
@@ -197,6 +206,6 @@ def parse_questions(raw_questions: List[Dict[str, Any]]):
 def get_questions():
     raw = generate_questions()
     if not raw:
-        print("Using fallback sample questions.")
+        # If API fails, raw is None, so we get samples
         raw = generate_sample_questions()
     return parse_questions(raw)
