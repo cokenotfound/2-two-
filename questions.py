@@ -57,7 +57,7 @@ Requirements:
       "D": "option text"
     },
     "answer": "A/B/C/D",
-    "explanation": "Detailed explanation (50-100 WORDS)"
+    "explanation": "Detailed explanation (50 WORDS MAX)"
   }
 ]
 
