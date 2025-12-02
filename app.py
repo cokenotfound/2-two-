@@ -151,7 +151,7 @@ if st.session_state.submitted:
 st.progress(answered_questions / total_questions)
 
 # -------------------------
-# Display Options or Explanation
+# Display Options or Explanation (FIXED FOR FEEDBACK)
 # -------------------------
 if not st.session_state.submitted:
     # Show options
@@ -182,7 +182,19 @@ if not st.session_state.submitted:
             st.rerun() 
 
 else:
-    # After submission, show explanation and Next button
+    # --- START: FEEDBACK LOGIC ---
+    last_answer_correct = st.session_state.answers[-1]['correct']
+    correct_option_text = f"{current_q['answer']}: {current_q['options'][current_q['answer']]}"
+
+    if last_answer_correct:
+        st.success("✅ Correct! Well done.")
+    else:
+        st.error(f"❌ Incorrect. The correct answer is {current_q['answer']}.")
+    
+    st.write(f"**Correct Option:** {correct_option_text}")
+    # --- END: FEEDBACK LOGIC ---
+    
+    # Show explanation and Next button
     st.write("Explanation:", current_q["explanation"])
 
     if st.button("Next Question"):
