@@ -1,9 +1,9 @@
 import os
 import json
 import random
-from dotenv import load_dotenv
 import uuid
 import requests
+from dotenv import load_dotenv
 from typing import List, Dict, Any
 
 # -------------------------
@@ -28,7 +28,7 @@ def get_api_key():
     return _OPENROUTER_API_KEY
 
 # -------------------------
-# Prompt for MCQs (UPDATED: Explanation length changed to 50 words)
+# Prompt for MCQs (FIXED to enforce A, B, C, D order)
 # -------------------------
 PROMPT = """
 Generate exactly 4 multiple-choice questions for CSE technical interview level:
@@ -39,11 +39,12 @@ Generate exactly 4 multiple-choice questions for CSE technical interview level:
 Requirements:
 
 1. Each question must have exactly 4 options (A, B, C, D).
-2. The correct answer must be randomly placed among the options; do not always put it at A.
+2. The **correct answer must be randomly assigned** to the keys A, B, C, or D; do not always use the same key.
 3. Provide one correct answer only.
 4. Provide a detailed explanation for why the correct answer is correct, **between 50 and 100 words**.
 5. **Include a 'sub_category' field** identifying the specific topic (e.g., 'Probability', 'Operating Systems').
-6. Format the output strictly as a JSON list like this:
+6. **Ensure the 'options' keys are ordered alphabetically (A, B, C, D) in the output JSON.**
+7. Format the output strictly as a JSON list like this:
 
 [
   {
@@ -57,15 +58,15 @@ Requirements:
       "D": "option text"
     },
     "answer": "A/B/C/D",
-    "explanation": "Detailed explanation (50 WORDS MAX)"
+    "explanation": "Detailed explanation (50-100 WORDS)"
   }
 ]
 
-Do not include any text outside the JSON. Ensure that the options for each question are shuffled.
+Do not include any text outside the JSON.
 """
 
 # -------------------------
-# Generate questions from OpenRouter
+# Generate questions from OpenRouter (Shuffling logic removed, Prompt trusts LLM)
 # -------------------------
 def generate_questions() -> List[Dict[str, Any]] | None:
     OPENROUTER_API_KEY = get_api_key()
@@ -94,12 +95,10 @@ def generate_questions() -> List[Dict[str, Any]] | None:
     
     text = ""
     try:
-        # Increased timeout to 90 seconds to accommodate slow free-tier latency
         response = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=90) 
         response.raise_for_status() 
         data = response.json()
         
-        # OpenRouter/OpenAI parsing
         text = data['choices'][0]['message']['content']
         
         # Robust JSON cleanup
@@ -113,6 +112,8 @@ def generate_questions() -> List[Dict[str, Any]] | None:
         text = text[json_start : json_end + 1]
         
         questions = json.loads(text)
+        
+        # NOTE: Client-side shuffling logic removed entirely, relying on LLM randomization (Prompt Requirement #2)
             
         return questions
     
@@ -128,7 +129,7 @@ def generate_questions() -> List[Dict[str, Any]] | None:
         return None
 
 # -------------------------
-# Fallback sample questions (UPDATED with new schema fields)
+# Fallback sample questions (UPDATED with detailed explanations)
 # -------------------------
 def generate_sample_questions() -> List[Dict[str, Any]]:
     return [
@@ -138,7 +139,7 @@ def generate_sample_questions() -> List[Dict[str, Any]]:
             "question": "What is the next number in the sequence: 2, 4, 8, 16, ...",
             "options": {"A": "20", "B": "24", "C": "32", "D": "48"},
             "answer": "C",
-            "explanation": "This is a geometric progression where each term is twice the previous term. The rule is 2^n. Since the last term is 16 (2^4), the next term will be 2^5, which equals 32. This type of pattern recognition is fundamental to quantitative aptitude. (75 words)."
+            "explanation": "This is a geometric progression where each term is twice the previous term. The rule follows the powers of two (2^n). Since the last term is 16 (2^4), the next term will be 2^5, which equals 32. This type of pattern recognition is fundamental to quantitative aptitude tests, requiring identification of multiplication factors. (80 words)."
         },
         {
             "type": "aptitude",
@@ -146,7 +147,7 @@ def generate_sample_questions() -> List[Dict[str, Any]]:
             "question": "What is the probability of rolling a 3 on a standard six-sided die?",
             "options": {"A": "1/2", "B": "1/6", "C": "1/3", "D": "1/12"},
             "answer": "B",
-            "explanation": "Probability is calculated as (Number of favorable outcomes) / (Total number of possible outcomes). A standard six-sided die has six possible outcomes (1, 2, 3, 4, 5, 6). The favorable outcome is rolling a 3, which is 1 outcome. Therefore, the probability is 1/6. This is a basic example of discrete probability. (80 words)."
+            "explanation": "Probability is calculated as (Number of favorable outcomes) / (Total number of possible outcomes). A standard six-sided die has six equally likely outcomes (1, 2, 3, 4, 5, 6). The favorable outcome is rolling exactly a 3, which is 1 outcome. Therefore, the probability remains 1/6, representing a basic discrete event. (85 words)."
         },
         {
             "type": "technical",
@@ -154,7 +155,7 @@ def generate_sample_questions() -> List[Dict[str, Any]]:
             "question": "Which data structure uses LIFO (Last-In, First-Out) ordering?",
             "options": {"A": "Queue", "B": "Stack", "C": "Linked List", "D": "Heap"},
             "answer": "B",
-            "explanation": "A stack is an abstract data type that maintains elements in a LIFO order. Think of it like a stack of plates: you only add to the top, and you only remove from the top. Operations include push (add) and pop (remove). This is crucial for managing function calls and variable scoping in computer programs. (70 words)."
+            "explanation": "A stack is an abstract data type that maintains elements in a LIFO order. Think of it like a stack of physical plates: you only add to the top (push), and you only remove from the top (pop). This order is crucial for managing function call stacks and variable scoping in programming execution. (70 words)."
         },
         {
             "type": "technical",
@@ -162,7 +163,7 @@ def generate_sample_questions() -> List[Dict[str, Any]]:
             "question": "What is a deadlock?",
             "options": {"A": "A process waiting for I/O", "B": "Two processes waiting for each other indefinitely", "C": "A process that has finished execution", "D": "A system crash due to low memory"},
             "answer": "B",
-            "explanation": "Deadlock is a state in concurrent computing where two or more processes are permanently unable to proceed because each is waiting for a resource that the other process is currently holding. The necessary conditions for deadlock are mutual exclusion, hold and wait, no preemption, and circular wait. This leads to system stagnation. (85 words)."
+            "explanation": "Deadlock is a critical state in concurrent computing where two or more processes are permanently blocked, each waiting for a resource that the other process is currently holding. The four necessary conditions for deadlock are mutual exclusion, hold and wait, no preemption, and circular wait. This situation renders the participating processes unusable. (90 words)."
         }
     ]
 
