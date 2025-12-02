@@ -28,7 +28,7 @@ def get_api_key():
     return _OPENROUTER_API_KEY
 
 # -------------------------
-# Prompt for MCQs (UPDATED: Explanation length changed to 50-100 words)
+# Prompt for MCQs (UPDATED: Explanation length changed to 50 words)
 # -------------------------
 PROMPT = """
 Generate exactly 4 multiple-choice questions for CSE technical interview level:
@@ -113,21 +113,6 @@ def generate_questions() -> List[Dict[str, Any]] | None:
         text = text[json_start : json_end + 1]
         
         questions = json.loads(text)
-        
-        # Shuffle options (Existing logic)
-        for q in questions:
-            opts = list(q['options'].items())
-            random.shuffle(opts)
-            shuffled = {k: v for k, v in opts}
-            correct_value = q['options'].get(q['answer'], None)
-            
-            # Find the new key corresponding to the correct value after shuffle
-            new_answer_key = next((key for key, val in shuffled.items() if val == correct_value), None)
-
-            if new_answer_key:
-                 q['answer'] = new_answer_key
-            
-            q['options'] = shuffled
             
         return questions
     
